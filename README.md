@@ -40,11 +40,12 @@ fullfunnel-outbound-reporting/
 
 See [docs/SUPABASE_SCHEMA.md](docs/SUPABASE_SCHEMA.md) for the full SQL.
 
-Required tables:
+Required tables — **`campaign_messaging_kb` does not exist yet as of 2026-08-01; run its migration in [docs/SUPABASE_SCHEMA.md](docs/SUPABASE_SCHEMA.md) before Gap 3 will work:**
 - `client_configs` — one row per client, holds API keys and Slack channel
 - `campaign_snapshots` — weekly metrics written after each run
-- `campaign_change_logs` — change audit trail, used by the AI agents
-- `campaign_messaging_kb` — messaging knowledge base, written after each run and read back before every report
+- `campaign_change_logs` — change audit trail, used by the AI agents (real columns are `campaign_id`/`platform`, not `campaign_name` — see [docs/SUPABASE_SCHEMA.md](docs/SUPABASE_SCHEMA.md))
+- `campaign_messaging_kb` — messaging knowledge base, written after each run and read back before every report — **needs creating**
+- `campaign_leads` — read-only dependency for Gap 2, synced by a process external to this workflow (not something you create here)
 
 ### 2. n8n — Import the Workflow
 
@@ -147,15 +148,15 @@ See [docs/GAP_TRACKING.md](docs/GAP_TRACKING.md) for full detail.
 
 | # | Gap | Status |
 |---|-----|--------|
-| 1 | Change logs not broken out by campaign | ✅ Implemented (v1.1) |
-| 2 | No unified cross-platform lead withdrawal | 🟡 Dry-run only (v1.3) — detects & logs, does not call withdrawal APIs yet |
-| 3 | No messaging knowledge base | ✅ Implemented (v1.2) |
+| 1 | Change logs not broken out by campaign | ✅ Implemented (v1.4 — earlier "resolved" status in v1.1/v1.2 was against a schema that turned out to be wrong; see below) |
+| 2 | No unified cross-platform lead withdrawal | 🟡 Dry-run only (v1.4) — detects & logs with confidence tiers, does not call withdrawal APIs yet |
+| 3 | No messaging knowledge base | 🟡 Code implemented (v1.2) — **its Supabase table doesn't exist yet**, see Quick Start above |
 
 ---
 
 ## Cross-Platform Withdrawal (Dry Run)
 
-Every report run also checks whether anyone who replied on Instantly this week is still on HeyReach's roster for the same client (or vice versa) — matched by normalised name + company, since the two platforms don't share a common identifier (no LinkedIn URL on the Instantly side, no email on the HeyReach side). Matches are logged to `campaign_change_logs` (`change_category: 'Cross-Platform Withdrawal (Dry Run)'`) and posted to Slack, clearly labelled **DRY RUN** — no lead is actually stopped or unsubscribed yet. See [docs/GAP_TRACKING.md](docs/GAP_TRACKING.md#gap-2--no-unified-cross-platform-lead-withdrawal).
+Every report run checks whether anyone who replied on Instantly this week is still active on HeyReach for the same client (or vice versa). As of v1.4 this tries an **exact email match first** against `campaign_leads` — a canonical lead registry synced independently of this workflow that carries email on both platforms' rows (and LinkedIn URL on HeyReach's) — checking the other platform's status to confirm the lead is still actively enrolled. Only falls back to normalised name+company fuzzy matching when no email match exists. Every match is labelled with its confidence (`high` or `medium`), logged to `campaign_change_logs`, and posted to Slack labelled **DRY RUN** — no lead is actually stopped or unsubscribed yet. See [docs/GAP_TRACKING.md](docs/GAP_TRACKING.md#gap-2--no-unified-cross-platform-lead-withdrawal).
 
 ---
 

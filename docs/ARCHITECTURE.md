@@ -43,14 +43,15 @@ Fetch Client Configs → Loop active clients → Workflow Configuration
 
 ## Platform Branching
 
-After `Filter Webhook Client`, execution splits into two parallel tracks plus two shared fetches:
+After `Filter Webhook Client`, execution splits into two parallel tracks plus three shared fetches:
 
 ```
 Filter Webhook Client
   ├─→ Check Instantly Key  (email track)
   ├─→ Check HeyReach Key   (LinkedIn track)
   ├─→ Fetch Client History (shared — feeds both tracks)
-  └─→ Fetch Messaging KB   (shared — feeds both tracks)
+  ├─→ Fetch Messaging KB   (shared — feeds both tracks)
+  └─→ Fetch Campaign Leads (shared — feeds both tracks, v1.4)
 ```
 
 ### Shared History Fetch
@@ -58,11 +59,12 @@ Filter Webhook Client
 ```
 Fetch Client History → Fetch Campaign Change Logs → Normalize Client History
 Fetch Messaging KB → Normalize Messaging KB
+Fetch Campaign Leads → Normalize Campaign Leads
 ```
 
 **`Fetch Client History`** — Reads `campaign_snapshots` for this client ordered by `reporting_window_end desc`. Used by AI agents to surface previous-window comparison.
 
-**`Fetch Campaign Change Logs`** — Reads `campaign_change_logs` for this client since `startDate`. Contains all analyst-logged changes (subject line edits, ICP changes, context notes, etc.).
+**`Fetch Campaign Change Logs`** — Reads `campaign_change_logs` for this client since `startDate`. Contains all analyst-logged changes (subject line edits, ICP changes, context notes, etc.). Real columns are `campaign_id`/`platform` (not `campaign_name` — see [docs/SUPABASE_SCHEMA.md](SUPABASE_SCHEMA.md)).
 
 **`Normalize Client History`** — Code node that parses the Supabase array response into n8n items, with a safe fallback for empty history.
 
@@ -70,7 +72,11 @@ Fetch Messaging KB → Normalize Messaging KB
 
 **`Normalize Messaging KB`** — Same parsing pattern as `Normalize Client History`, with an `is_empty_kb` fallback for clients with no KB history yet.
 
-Normalized history and KB entries then feed into both the Instantly `Merge` node (inputs 5 and 6) and the HeyReach `Merge all heyreach nodes data` node (inputs 4 and 5).
+**`Fetch Campaign Leads`** (v1.4) — Reads `campaign_leads` for this client — a canonical lead registry synced independently of this workflow (see [docs/SUPABASE_SCHEMA.md](SUPABASE_SCHEMA.md#campaign_leads)), with `email` on Instantly rows and `email`/`linkedin_profile_url` on HeyReach rows. Used by `Cross-Platform Withdrawal Check` as the primary, exact-match data source for Gap 2.
+
+**`Normalize Campaign Leads`** (v1.4) — Same parsing pattern as the other Supabase list-fetches, with an `is_empty_leads` fallback.
+
+Normalized history, KB entries, and campaign leads then feed into both the Instantly `Merge` node (inputs 5, 6, and 7) and the HeyReach `Merge all heyreach nodes data` node (inputs 4, 5, and 6).
 
 ---
 
@@ -115,15 +121,15 @@ All six branches fire simultaneously:
 ### Merge & Report Assembly
 
 ```
-Merge (7 inputs) → Merge Report Data → Instantly Outbound Reporting AI Agent → Parse Instantly Output
+Merge (8 inputs) → Merge Report Data → Instantly Outbound Reporting AI Agent → Parse Instantly Output
 ```
 
-**`Merge`** — `chooseBranch` mode with 7 inputs (added `Normalize Messaging KB` as input 6 in v1.2). Waits for all branches to complete before passing data downstream — a synchronization barrier; `Merge Report Data` reads each source by name, not from this node's own passthrough output.
+**`Merge`** — `chooseBranch` mode with 8 inputs (`Normalize Messaging KB` added as input 6 in v1.2; `Normalize Campaign Leads` added as input 7 in v1.4). Waits for all branches to complete before passing data downstream — a synchronization barrier; `Merge Report Data` reads each source by name, not from this node's own passthrough output.
 
 **`Merge Report Data`** — Code node. The core aggregation step:
 1. Indexes analytics, campaign data, leads, accounts, replies, and lifetime stats by campaign ID
 2. Builds per-campaign `reportData` objects
-3. **Filters `campaign_change_logs` to the current campaign** using `filterLogsByCampaign()` (fuzzy name match; logs without `campaign_name` are treated as client-wide) — including the `Campaign Context` lookup
+3. **Filters `campaign_change_logs` to the current campaign** using `filterLogsForCampaign()` (exact match on `campaign_id` + `platform`, with `platform = 'general'` passed through as client-wide — corrected in v1.4 after discovering `campaign_change_logs` has no `campaign_name` column) — including the `Campaign Context` lookup
 4. **Attaches `priorMessagingContext`** — this client's recent `campaign_messaging_kb` entries across all campaigns/platforms, unfiltered by campaign (v1.2)
 5. Filters replies to the reporting window, strips OOO/auto-replies
 6. Looks up previous snapshot for trend context
@@ -163,16 +169,17 @@ Check HeyReach Key → Retrieve all campaigns → Match Heyreach Campaign Name
 ### Merge & Report Assembly
 
 ```
-Merge all heyreach nodes data (6 inputs) → Merge Heyreach Nodes Data → Heyreach Outbound Reporting AI Agent → Parse HeyReach Output
+Merge all heyreach nodes data (7 inputs) → Merge Heyreach Nodes Data → Heyreach Outbound Reporting AI Agent → Parse HeyReach Output
 ```
 
 **`Merge Heyreach Nodes Data`** — Code node equivalent to `Merge Report Data` but for LinkedIn:
 1. Indexes campaign data and stats by campaign ID using `pairedItem` to correlate parallel branches
 2. Classifies reply sentiment (positive / neutral / negative / informational) using keyword matching
 3. Filters inbox conversations to replies that fall within the reporting window
-4. **Filters `campaign_change_logs` to the current campaign** (same `filterLogsByCampaign()` helper as Instantly track)
+4. **Filters `campaign_change_logs` to the current campaign** (same `filterLogsForCampaign()` helper as Instantly track — matches real numeric HeyReach campaign IDs)
 5. **Attaches `priorMessagingContext`** — same client-wide KB lookup as the Instantly track (v1.2)
-6. Outputs one item per active campaign
+6. Also exposes `leadsAnalysis.connectedLeads` as a full array (v1.3), used by `Cross-Platform Withdrawal Check`'s fuzzy-match fallback
+7. Outputs one item per active campaign
 
 **`Heyreach Outbound Reporting AI Agent`** — Claude Sonnet 4.6. Same pattern as Instantly agent but with LinkedIn-specific schema, verdict rules, and the same "PRIOR MESSAGING CONTEXT" prompt section (v1.2).
 
@@ -190,7 +197,7 @@ Merge → Instantly + HeyReach (4 inputs)
   └─ Set → HeyReach Lifetime Data  → input 3
 
 → Compose Combined Report → Has Active Campaigns? → Combined Readout AI Agent → Finalize Document
-→ Cross-Platform Withdrawal Check (parallel branch, v1.3 — see below)
+→ Cross-Platform Withdrawal Check (parallel branch, v1.3 → v1.4 — see below)
 ```
 
 **`Compose Combined Report`** — Code node. Builds the full Slack message text and the CSV:
@@ -208,7 +215,7 @@ Merge → Instantly + HeyReach (4 inputs)
 
 ---
 
-## Cross-Platform Withdrawal Check (Dry Run, v1.3)
+## Cross-Platform Withdrawal Check (Dry Run, v1.3 → upgraded v1.4)
 
 ```
 Merge – Instantly + HeyReach → Cross-Platform Withdrawal Check → Log Dry-Run Withdrawal to Supabase
@@ -217,17 +224,17 @@ Merge – Instantly + HeyReach → Cross-Platform Withdrawal Check → Log Dry-R
 
 Runs once per client (default Code node behaviour — all of that client's campaign items arrive in one execution), in parallel with `Compose Combined Report`. Does not depend on or block the main report path.
 
-**`Cross-Platform Withdrawal Check`** — reads the raw (pre-AI) `reportData` from every `Merge Report Data` and `Merge Heyreach Nodes Data` execution for this client via named node references:
-- Instantly repliers this window: `reportData.leadsAnalysis.leadsWithReplies` (name, company — populated by `Accumulate Leads`)
-- Instantly full roster: `reportData.leadsAnalysis.allLeadsLite` (name, company, email for every lead, not just repliers — added in v1.3, capped at 5,000 same as the existing pagination limit)
-- HeyReach repliers this window: `reportData.replyAnalysis.replies` (name, company)
-- HeyReach roster: `reportData.leadsAnalysis.connectedLeads` (name, company — everyone with an active conversation thread; exposed in v1.3, previously only its count was surfaced)
+**`Cross-Platform Withdrawal Check`** — reads the raw (pre-AI) `reportData` from every `Merge Report Data` and `Merge Heyreach Nodes Data` execution for this client, plus `Normalize Campaign Leads`, all via named node references. Tries two tiers of match, high confidence first:
 
-For each Instantly replier whose normalised name+company matches someone on the HeyReach roster, emits a dry-run candidate: "would stop in HeyReach." Mirrors the check in the other direction for HeyReach repliers against the Instantly roster: "would unsubscribe from Instantly." No shared high-confidence identifier (email/LinkedIn URL) exists between the two platforms' currently-collected data, so all matches are labelled "medium confidence (name+company fuzzy match)." Emits zero items when there's nothing to flag — downstream nodes simply don't execute for that client, no gate needed.
+**Tier 1 — high confidence (email match, v1.4):** for each Instantly replier this window (`reportData.leadsAnalysis.leadsWithReplies`, which includes email), looks up their email directly against `campaign_leads` rows for HeyReach; if found and that lead's `lead_status` is non-terminal (not `Finished`/`Failed`/`Excluded`), flags a "would stop in HeyReach" candidate. Mirrored for HeyReach repliers (`reportData.replyAnalysis.replies`, which has LinkedIn URL but not email): their own `campaign_leads` (HeyReach) row is looked up by `linkedin_profile_url` to recover an email, which is then checked against Instantly's `campaign_leads` rows (non-terminal Instantly status codes: not `3`/`-1`/`-2`).
 
-**`Log Dry-Run Withdrawal to Supabase`** — POSTs each match to `campaign_change_logs` with `change_category: 'Cross-Platform Withdrawal (Dry Run)'`.
+**Tier 2 — medium confidence (name+company fuzzy match, v1.3, fallback only):** used only when no email match exists on either side. Compares normalised name+company against this run's own live roster data: `reportData.leadsAnalysis.allLeadsLite` (Instantly, every lead not just repliers) and `reportData.leadsAnalysis.connectedLeads` (HeyReach, everyone with an active conversation thread).
 
-**`Notify Dry-Run Withdrawal Match`** — posts each match to the client's Slack channel via the native Slack node (same channel-ID handling as `Send Report Message to Slack`), clearly labelled DRY RUN.
+Every match carries a `confidence` field (`high (email match)` or `medium (name+company fuzzy match)`) that flows into both the Slack message and the Supabase log entry. Emits zero items when there's nothing to flag — downstream nodes simply don't execute for that client, no gate needed.
+
+**`Log Dry-Run Withdrawal to Supabase`** — POSTs each match to `campaign_change_logs` using the real schema (`campaign_id`, `platform` — corrected in v1.4; the table has no `campaign_name` column) with `change_category: 'Cross-Platform Withdrawal (Dry Run)'`.
+
+**`Notify Dry-Run Withdrawal Match`** — posts each match to the client's Slack channel via the native Slack node (same channel-ID handling as `Send Report Message to Slack`), clearly labelled DRY RUN. **Open item:** intended to redirect to a dedicated test channel during the verification period — pending a channel ID from the team.
 
 No withdrawal API (`StopLeadInCampaign`, Instantly unsubscribe) is called in this pass — see [docs/GAP_TRACKING.md](GAP_TRACKING.md#gap-2--no-unified-cross-platform-lead-withdrawal) for what's next.
 

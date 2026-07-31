@@ -4,6 +4,34 @@ All notable changes to this workflow are documented here.
 
 ---
 
+## [v1.4] — 2026-08-01
+
+### Fixed — Gap 1 change-log filtering was matching a nonexistent column
+
+Live inspection of Supabase (`information_schema.columns`) found that `campaign_change_logs` has no `campaign_name` column at all — only `campaign_id` and `platform` (both `NOT NULL`). The v1.1/v1.2 `filterLogsByCampaign()` filtered on `campaign_name`, so every log's match check silently evaluated to "client-wide" against the real table — **Gap 1 was never actually fixed in production**, despite looking correct in the code.
+
+Replaced with `filterLogsForCampaign(logs, campaignIdValue, platform)` in both `Merge Report Data` and `Merge Heyreach Nodes Data`, matching on `(campaign_id, platform)` with `platform = 'general'` preserved as the client-wide passthrough (the existing convention used by the Slack Command Handler's bulk-context flow). Instantly matches against campaign name (its real ID doesn't survive the AI schema upstream, so that's what's actually stored); HeyReach matches against its real numeric campaign ID. See `docs/GAP_TRACKING.md` for the full trace.
+
+**Gap status:** Gap 1 — now actually resolved ✅ (previous "resolved" status was against the wrong schema)
+
+### Changed — Gap 2 upgraded to real identifier matching via `campaign_leads`
+
+Discovered a third Supabase table, `campaign_leads` — populated independently of both n8n workflows (likely Clay or a dedicated sync job), with `email` on Instantly rows and both `email` (usually) and `linkedin_profile_url` on HeyReach rows, keyed by `client_name`/`platform`/`campaign_id`/`lead_status`.
+
+**Nodes added:** `Fetch Campaign Leads`, `Normalize Campaign Leads` — wired into both merge barriers (`Merge` 7→8 inputs, `Merge all heyreach nodes data` 6→7 inputs).
+
+`Cross-Platform Withdrawal Check` rewritten to try an **exact email match** against `campaign_leads` first (checking the other platform's `lead_status` for "still active"), falling back to the v1.3 fuzzy name+company match only when no email match exists. Every match now carries a `confidence` label (`high (email match)` / `medium (name+company fuzzy match)`) in both the Slack notification and the Supabase log entry.
+
+`Log Dry-Run Withdrawal to Supabase` corrected to send `campaign_id`/`platform` (the real columns) instead of the nonexistent `campaign_name`.
+
+**Still open:** live withdrawal APIs are not called; the dry-run Slack notification still posts to each client's own report channel rather than a dedicated test channel (pending a channel ID).
+
+### Fixed — Gap 3's table doesn't exist yet
+
+A live `information_schema.tables` query confirmed `campaign_messaging_kb` was never created in Supabase. The workflow's read/write nodes have been correct since v1.2, but the table itself needs the CREATE TABLE migration run in the Supabase SQL editor (SQL in `docs/SUPABASE_SCHEMA.md` and `docs/GAP_TRACKING.md`) before Gap 3 actually functions.
+
+---
+
 ## [v1.3] — 2026-08-01
 
 ### Added — Cross-platform withdrawal, dry-run only (Gap 2)

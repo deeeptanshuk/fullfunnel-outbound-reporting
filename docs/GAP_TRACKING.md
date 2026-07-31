@@ -8,7 +8,7 @@ Source: *Outbound Change Tracking — Problem & Gaps* (Deep / Hunter Brayton, Ju
 
 ## Gap 1 — Change logs not broken out by campaign
 
-**Status:** ✅ Resolved in v1.1 (2026-07-31)
+**Status:** ✅ Resolved in v1.4 (2026-08-01) — see correction below; earlier "resolved" status in v1.1/v1.2 was against a schema that turned out to be wrong
 
 ### Problem
 Messaging changes, prompts, and analyst logs were organised by client only. When a client had multiple active campaigns, every campaign's AI agent saw the full client-wide change log. This caused:
@@ -18,35 +18,39 @@ Messaging changes, prompts, and analyst logs were organised by client only. When
 ### Root cause
 `Fetch Campaign Change Logs` fetches all logs for a client. In `Merge Report Data` and `Merge Heyreach Nodes Data`, `changeLogs` was passed wholesale to each campaign's `reportData` without any per-campaign filtering.
 
-### Fix
-Added `filterLogsByCampaign(logs, campaignName)` helper in both `Merge Report Data` and `Merge Heyreach Nodes Data`:
+### Fix history — and a schema correction (important)
+v1.1/v1.2 added a `filterLogsByCampaign(logs, campaignName)` helper matching on a `campaign_name` field. **This was built against a documented schema that did not match the real table.** A live `information_schema.columns` query against `campaign_change_logs` (2026-08-01) showed:
+
+```
+id, client_name, campaign_id, platform, change_category, change_description, actioned_by, actioned_at
+```
+
+There is **no `campaign_name` column at all** — `campaign_id` and `platform` are the real join keys, and both are `NOT NULL`. Since every row's `campaign_name` field was `undefined` against the real data, the v1.1/v1.2 filter silently treated *every* log as client-wide — the bug this gap was meant to fix was never actually fixed in production, despite the code looking correct.
+
+**v1.4 fix** — replaced with `filterLogsForCampaign(logs, campaignIdValue, platform)` in both `Merge Report Data` and `Merge Heyreach Nodes Data`:
 
 ```js
-function filterLogsByCampaign(logs, campaignName) {
-  if (!campaignName || !logs.length) return logs;
-  const norm = n => (n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const cn = norm(campaignName);
+function filterLogsForCampaign(logs, campaignIdValue, platform) {
+  if (!logs.length) return logs;
   return logs.filter(log => {
-    if (!log.campaign_name) return true; // client-wide logs pass through
-    const ln = norm(log.campaign_name);
-    return ln === cn || cn.includes(ln) || ln.includes(cn);
+    if (log.platform === 'general') return true; // client-wide notes pass through
+    return log.platform === platform && String(log.campaign_id) === String(campaignIdValue);
   });
 }
 ```
 
-Each campaign now receives only its own change logs — including the `Campaign Context` lookup, which previously scanned the unfiltered list and could surface another campaign's note. Logs without `campaign_name` are treated as client-wide and included for all campaigns.
+`platform = 'general'` is the existing convention (already used by the Slack Command Handler's bulk-context flow) for notes that apply to the whole client rather than one campaign — this replaces the old "missing campaign_name" pass-through rule.
+
+**Important asymmetry to know about:** Instantly's real numeric campaign ID does not survive the AI output schema upstream (`campaignOverview` never carried an `id` field), so `campaign_snapshots` — and therefore every Slack-logged Instantly change — has always stored the **campaign name** as `campaign_id` for Instantly rows. HeyReach rows use the real numeric HeyReach campaign ID. The v1.4 fix matches this existing convention rather than trying to introduce a "more correct" numeric ID that was never actually being captured anywhere in the pipeline. `Merge Report Data` matches Instantly logs against `targetCampaignName`; `Merge Heyreach Nodes Data` matches HeyReach logs against the real numeric `matchedCampaignId`.
 
 ### Prerequisite
-`campaign_change_logs` table must have a `campaign_name` column (text, nullable). See [SUPABASE_SCHEMA.md](SUPABASE_SCHEMA.md).
-
-### Note — live/GitHub drift (found & fixed 2026-07-31, v1.2)
-The live n8n workflow was built before this fix landed and had never received it — `filterLogsByCampaign` existed in the GitHub JSON but not in the actual running workflow. This was discovered and corrected while implementing Gap 3 (same two code nodes needed touching either way). Live and GitHub are now in sync.
+None — `campaign_id` and `platform` already exist on the real table (confirmed live). No migration needed for Gap 1 itself.
 
 ---
 
 ## Gap 2 — No unified cross-platform lead withdrawal
 
-**Status:** 🟡 Dry-run implemented in v1.3 (2026-08-01) — not yet calling live withdrawal APIs
+**Status:** 🟡 Dry-run implemented in v1.4 (2026-08-01), upgraded from the v1.3 fuzzy-only approach — not yet calling live withdrawal APIs
 
 ### Problem
 A reply in Instantly does not withdraw the lead from the HeyReach sequence, and vice versa. The same gap applies to tele-prospecting. A lead who has already replied on one channel continues to be messaged on the others, leading to:
@@ -54,49 +58,92 @@ A reply in Instantly does not withdraw the lead from the HeyReach sequence, and 
 - Poor prospect experience
 - Wasted sender reputation on leads already engaged
 
-### Why this shipped as dry-run only, and as a fuzzy match
-The original proposed solution below assumed email (Instantly) and LinkedIn URL (HeyReach) could be cross-referenced directly. In practice, neither platform's data as currently collected by this workflow carries the other's identifier — Instantly's reply/lead data has no LinkedIn URL field, and HeyReach's reply/lead data has no email field. There is no shared identifier to match on with high confidence today.
+**Tele-prospecting is out of scope** — no tele-prospecting tool/API was identified as in use, so the withdrawal loop only covers Instantly ↔ HeyReach.
 
-Given that, and given this gap's real side effects (stopping a live sequence, unsubscribing a real lead) compared to Gaps 1 and 3's internal-table-only reads/writes, this pass implements **detection and logging only** — no withdrawal API is called. Matching is done by normalised name + company (fuzzy, medium confidence), and every match is logged to `campaign_change_logs` and posted to Slack labelled `DRY RUN`, so the team can verify accuracy against real weeks of data before any live withdrawal is built.
+### v1.3 → v1.4: discovery of `campaign_leads`
+v1.3 shipped with fuzzy name+company matching only, because the data each n8n workflow collects directly from the Instantly/HeyReach APIs has no shared identifier (Instantly reply data has email, no LinkedIn URL; HeyReach reply data has LinkedIn URL, no email).
 
-**Tele-prospecting is out of scope for this pass** — no tele-prospecting tool/API was identified as in use, so the withdrawal loop currently only covers Instantly ↔ HeyReach.
+While verifying schema assumptions live against Supabase, a **third table — `campaign_leads` — was discovered**, populated by some process independent of either n8n workflow (neither writes to it; `last_synced_at` shows it's actively and recently synced, likely via Clay or a dedicated sync job). Its real schema:
 
-### What was built (v1.3)
-**Data collection extended (needed for the roster side of the match):**
-- `Accumulate Leads` (Instantly) now also accumulates a lightweight full lead roster — `email`/`name`/`company` only, for every lead, not just repliers — capped alongside the existing 5,000-lead limit. This stays memory-safe; it's 3 short strings per lead, not a full payload.
-- `Merge Heyreach Nodes Data` now exposes `leadsAnalysis.connectedLeads` (previously only its count was surfaced) — everyone with an active HeyReach conversation thread, used as the HeyReach-side roster.
+```
+id, client_name, platform, campaign_id, campaign_name, external_lead_id,
+email, first_name, last_name, company_name, company_domain,
+linkedin_profile_url, lead_status, last_synced_at, created_at
+```
 
-**New node: `Cross-Platform Withdrawal Check`** — runs once per client (after `Merge – Instantly + HeyReach`, in parallel with `Compose Combined Report`). For every Instantly replier this window, checks if their normalised name+company appears in the client's HeyReach roster (`connectedLeads`) — if so, that's a dry-run "would stop in HeyReach" candidate. Mirrors the check in the other direction (HeyReach replier → Instantly roster → "would unsubscribe from Instantly"). Emits zero items when there's nothing to flag (no separate empty-case handling needed — downstream nodes simply don't run).
+Confirmed from live sample rows: Instantly rows have real `email` (no `linkedin_profile_url`); HeyReach rows have `linkedin_profile_url` and — in most sampled rows — `email` too. `lead_status` uses each platform's native vocabulary: HeyReach text (`Finished`/`InSequence`/`Pending`/`Failed`/`Excluded`), Instantly numeric codes (`1`/`3`/`-1`/`-2`/etc., roughly Active/Completed/Bounced/Unsubscribed).
 
-**New nodes: `Log Dry-Run Withdrawal to Supabase`** (POST to `campaign_change_logs`, `change_category: 'Cross-Platform Withdrawal (Dry Run)'`, `actioned_by: 'Automated (Dry Run)'`) and **`Notify Dry-Run Withdrawal Match`** (Slack message to the client's channel, clearly labelled DRY RUN, using the same native Slack node + channel-ID handling as `Send Report Message to Slack`).
+**This is a real shared identifier this workflow didn't have access to before** — the original Gap 2 proposal's "match by email" assumption is achievable after all, just via this table rather than directly from live API pulls.
 
-### Known limitation — this only catches "still enrolled," not literally "every possible lead"
-The HeyReach roster (`connectedLeads`) comes from inbox conversation data (`GetConversationsV2`), which covers everyone with an active conversation thread — a good proxy for "currently being messaged," not a literal export of every lead in every campaign. The Instantly roster is the full paginated lead list (up to 5,000), which is closer to complete. Confidence is always reported as "medium (name+company fuzzy match)" — there is no "high confidence / exact identifier" tier available with the data collected today.
+### What was built (v1.4)
+**New nodes:** `Fetch Campaign Leads` (queries `campaign_leads` for the client), `Normalize Campaign Leads` (same parsing pattern as the other Supabase list-fetches) — wired into both merge barriers (`Merge` now 8 inputs, `Merge all heyreach nodes data` now 7).
 
-### Original proposed solution (superseded by the above where it assumed a shared identifier)
+**`Cross-Platform Withdrawal Check` rewritten** with a two-tier match:
+1. **High confidence (email match):** an Instantly replier's email is looked up directly against HeyReach's `campaign_leads` rows for the client; if found and that lead's `lead_status` is non-terminal (still actively enrolled), it's flagged. Mirrored for HeyReach repliers: their `campaign_leads` (HeyReach) row is looked up by LinkedIn URL to recover their email, which is then checked against Instantly's `campaign_leads` rows.
+2. **Medium confidence (name+company fuzzy match):** falls back to the v1.3 approach — comparing this run's own live roster data (`allLeadsLite`, `connectedLeads`) — only when no email match exists (e.g. a HeyReach lead with no email on file).
+
+Every match carries a `confidence` label (`high (email match)` or `medium (name+company fuzzy match)`), visible in both the Slack notification and the `campaign_change_logs` entry, so matches can be trusted or scrutinized accordingly.
+
+**`Log Dry-Run Withdrawal to Supabase`** — POSTs to `campaign_change_logs` using the real schema (`campaign_id`, `platform` — not `campaign_name`, which doesn't exist; see Gap 1's correction above).
+
+**`Notify Dry-Run Withdrawal Match`** — posts to the client's Slack channel, clearly labelled DRY RUN. **Known open item:** intended to redirect to a dedicated test channel during the verification period rather than the client's own report channel — pending a channel ID.
+
+No withdrawal API (`StopLeadInCampaign`, Instantly unsubscribe) is called in this pass.
+
+### Data retained from v1.3 (used as the medium-confidence fallback)
+- `Accumulate Leads` (Instantly) still accumulates a lightweight full lead roster (`email`/`name`/`company`, every lead not just repliers) alongside its existing counts/repliers, capped at 5,000
+- `Merge Heyreach Nodes Data` still exposes `leadsAnalysis.connectedLeads` (everyone with an active HeyReach conversation thread)
+
+### Known limitations
+- The medium-confidence fallback still only approximates "currently enrolled" (HeyReach's `connectedLeads` covers active conversation threads, not a literal export of every lead in every campaign)
+- `campaign_leads`' own completeness/freshness depends entirely on whatever external process populates it — not verified as part of this work
+- Live withdrawal calls are still not wired up; this remains detection + logging only
+
+### Original proposed solution
 - **Instantly reply → stop in HeyReach:** Call `POST /campaign/StopLeadInCampaign` for each matched lead in active HeyReach campaigns
 - **HeyReach reply → unsubscribe in Instantly:** Call `POST /leads/unsubscribe` or mark lead status in Instantly for each matched email
 
-**Next step, once dry-run has been verified against real data:** wire the two API calls above behind the existing match detection, replacing the log/notify-only branch (or adding to it) with the actual withdrawal call — gated so it only fires above some confidence bar the team is comfortable with.
+**Next step, once dry-run has been verified against real data (especially the high-confidence email matches):** wire the two API calls above behind the existing match detection — likely gated to the `high (email match)` tier only at first, given the medium-confidence fuzzy tier is still a guess.
 
 ---
 
 ## Gap 3 — No messaging knowledge base
 
-**Status:** ✅ Resolved in v1.2 (2026-07-31)
+**Status:** 🟡 Code implemented in v1.2 (2026-07-31) — **Supabase table not yet created**, confirmed via a live `information_schema.tables` query on 2026-08-01
 
 ### Problem
 No repository of past messaging approaches, subject lines, or sequence structures by client, campaign, or ICP segment. Every new campaign starts from zero. Known successes and failures are lost between reporting cycles.
 
 ### Fix
-Added a `campaign_messaging_kb` Supabase table (see [SUPABASE_SCHEMA.md](SUPABASE_SCHEMA.md)) with a read step and a write step in the live workflow:
+Added read/write steps for a `campaign_messaging_kb` Supabase table (see [SUPABASE_SCHEMA.md](SUPABASE_SCHEMA.md)) in the live workflow:
 
 **Write step** — `Prepare Instantly KB Entry` / `Prepare HeyReach KB Entry` run off `Parse Instantly Output` / `Parse HeyReach Output` (parallel to the existing snapshot-write branch) and derive `approach` (primary signal + what's working / areas to watch), `outcome` (executive summary), and `verdict` directly from that week's AI agent output — no extra AI call. `Write Instantly/HeyReach KB Entry to Supabase` upsert on `(campaign_id, week_of)`.
 
-**Read step** — `Fetch Messaging KB` queries the client's most recent 15 KB entries across **all** of their campaigns and platforms (deliberately not filtered to the current campaign, unlike change logs — the point is cross-campaign learning). `Normalize Messaging KB` parses the response the same way `Normalize Client History` does. Both feed into `Merge` / `Merge all heyreach nodes data` as a new synchronization input, and `Merge Report Data` / `Merge Heyreach Nodes Data` attach the result to `reportData.priorMessagingContext`.
+**Read step** — `Fetch Messaging KB` queries the client's most recent 15 KB entries across **all** of their campaigns and platforms (deliberately not filtered to the current campaign, unlike change logs — the point is cross-campaign learning). `Normalize Messaging KB` parses the response the same way `Normalize Client History` does. Both feed into `Merge` / `Merge all heyreach nodes data` as a synchronization input, and `Merge Report Data` / `Merge Heyreach Nodes Data` attach the result to `reportData.priorMessagingContext`.
 
-Both AI agent system prompts (`Instantly Outbound Reporting AI Agent`, `Heyreach Outbound Reporting AI Agent`) now have a "PRIOR MESSAGING CONTEXT" instruction block telling the model to avoid re-recommending approaches already shown to fail for this client, and to call out cross-campaign/cross-platform patterns when relevant.
+Both AI agent system prompts (`Instantly Outbound Reporting AI Agent`, `Heyreach Outbound Reporting AI Agent`) have a "PRIOR MESSAGING CONTEXT" instruction block telling the model to avoid re-recommending approaches already shown to fail for this client, and to call out cross-campaign/cross-platform patterns when relevant.
 
-**Not included in this pass:**
+### ⚠️ Action required before this actually works
+The `campaign_messaging_kb` table itself **does not exist yet** — confirmed by querying `information_schema.tables` directly against the live database. The workflow's read/write nodes will fail (or silently no-op, depending on how the HTTP nodes handle a 404/missing-table response) until this is run in the Supabase SQL editor:
+
+```sql
+create table public.campaign_messaging_kb (
+  id              uuid primary key default gen_random_uuid(),
+  client_name     text not null,
+  campaign_id     text not null,
+  campaign_name   text,
+  platform        text not null check (platform in ('instantly', 'heyreach')),
+  icp_segment     text,
+  approach        text,
+  outcome         text,
+  verdict         text,
+  week_of         date not null,
+  created_at      timestamptz not null default now(),
+  unique (campaign_id, week_of)
+);
+create index on public.campaign_messaging_kb (client_name, week_of desc);
+```
+
+### Not included in this pass
 - `icp_segment` is not populated — there's no ICP tagging anywhere upstream yet (`client_configs`, `campaign_change_logs`). The column exists in the schema for when that's added.
 - No dedicated summarisation AI call — the KB entry is derived from the existing structured AI output fields, which keeps this cheap and avoids adding a model call that wasn't clearly needed yet. If `approach`/`outcome` prove too thin in practice (e.g. teams want actual subject-line text captured), revisit with a dedicated summarisation step.
