@@ -4,6 +4,24 @@ All notable changes to this workflow are documented here.
 
 ---
 
+## [v1.3] — 2026-08-01
+
+### Added — Cross-platform withdrawal, dry-run only (Gap 2)
+
+**Nodes added:** `Cross-Platform Withdrawal Check`, `Log Dry-Run Withdrawal to Supabase`, `Notify Dry-Run Withdrawal Match`
+**Nodes extended:** `Accumulate Leads` (now also tracks a lightweight full lead roster — email/name/company for every lead, not just repliers), `Merge Heyreach Nodes Data` (now exposes `leadsAnalysis.connectedLeads` as a full array, not just a count)
+
+- Every report run now checks whether an Instantly replier is still on the client's HeyReach roster (or vice versa), matched by normalised name + company
+- No shared identifier (email / LinkedIn URL) exists between the two platforms' currently-collected data, so this is a fuzzy, medium-confidence match — not the exact-identifier match originally proposed
+- Matches are logged to `campaign_change_logs` (`change_category: 'Cross-Platform Withdrawal (Dry Run)'`) and posted to the client's Slack channel, clearly labelled DRY RUN
+- **No withdrawal API is called** — this detects and reports only. Tele-prospecting is out of scope (no tool/API identified yet)
+
+**Why this matters:** the problem doc's core ask — stop messaging someone who already replied elsewhere — needs verification against real weeks of data before it's safe to wire to a live `StopLeadInCampaign` / unsubscribe call. This gives the team visibility into what the matcher would do without touching a single live lead.
+
+**Gap status:** Gap 2 — dry-run implemented, live withdrawal still to come 🟡
+
+---
+
 ## [v1.2] — 2026-07-31
 
 ### Added — Messaging knowledge base (Gap 3)

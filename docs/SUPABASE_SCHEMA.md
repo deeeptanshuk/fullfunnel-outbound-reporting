@@ -122,6 +122,7 @@ create index on public.campaign_change_logs (client_name, campaign_name, actione
 | `Sender Account` | Adding/removing sender accounts | Suppresses "Profile Optimisation" recommendation |
 | `Campaign Context` | Strategic notes for the AI (e.g. "paused for list cleaning") | Appears in report context block |
 | `Sequence` | Step order or timing changes | Suppresses "Sequence Timing Audit" recommendation |
+| `Cross-Platform Withdrawal (Dry Run)` | Auto-logged by the workflow (v1.3) when a reply on one platform fuzzy-matches a lead on the other — no live withdrawal happens yet, see [GAP_TRACKING.md](GAP_TRACKING.md#gap-2--no-unified-cross-platform-lead-withdrawal) | None — informational only |
 
 ---
 

@@ -46,7 +46,7 @@ The live n8n workflow was built before this fix landed and had never received it
 
 ## Gap 2 — No unified cross-platform lead withdrawal
 
-**Status:** 🔲 Planned
+**Status:** 🟡 Dry-run implemented in v1.3 (2026-08-01) — not yet calling live withdrawal APIs
 
 ### Problem
 A reply in Instantly does not withdraw the lead from the HeyReach sequence, and vice versa. The same gap applies to tele-prospecting. A lead who has already replied on one channel continues to be messaged on the others, leading to:
@@ -54,18 +54,30 @@ A reply in Instantly does not withdraw the lead from the HeyReach sequence, and 
 - Poor prospect experience
 - Wasted sender reputation on leads already engaged
 
-### Proposed solution
-After collecting replies from each platform, match repliers across platforms by email address (Instantly → HeyReach) or LinkedIn profile URL (HeyReach → Instantly) and call the withdrawal API:
+### Why this shipped as dry-run only, and as a fuzzy match
+The original proposed solution below assumed email (Instantly) and LinkedIn URL (HeyReach) could be cross-referenced directly. In practice, neither platform's data as currently collected by this workflow carries the other's identifier — Instantly's reply/lead data has no LinkedIn URL field, and HeyReach's reply/lead data has no email field. There is no shared identifier to match on with high confidence today.
 
+Given that, and given this gap's real side effects (stopping a live sequence, unsubscribing a real lead) compared to Gaps 1 and 3's internal-table-only reads/writes, this pass implements **detection and logging only** — no withdrawal API is called. Matching is done by normalised name + company (fuzzy, medium confidence), and every match is logged to `campaign_change_logs` and posted to Slack labelled `DRY RUN`, so the team can verify accuracy against real weeks of data before any live withdrawal is built.
+
+**Tele-prospecting is out of scope for this pass** — no tele-prospecting tool/API was identified as in use, so the withdrawal loop currently only covers Instantly ↔ HeyReach.
+
+### What was built (v1.3)
+**Data collection extended (needed for the roster side of the match):**
+- `Accumulate Leads` (Instantly) now also accumulates a lightweight full lead roster — `email`/`name`/`company` only, for every lead, not just repliers — capped alongside the existing 5,000-lead limit. This stays memory-safe; it's 3 short strings per lead, not a full payload.
+- `Merge Heyreach Nodes Data` now exposes `leadsAnalysis.connectedLeads` (previously only its count was surfaced) — everyone with an active HeyReach conversation thread, used as the HeyReach-side roster.
+
+**New node: `Cross-Platform Withdrawal Check`** — runs once per client (after `Merge – Instantly + HeyReach`, in parallel with `Compose Combined Report`). For every Instantly replier this window, checks if their normalised name+company appears in the client's HeyReach roster (`connectedLeads`) — if so, that's a dry-run "would stop in HeyReach" candidate. Mirrors the check in the other direction (HeyReach replier → Instantly roster → "would unsubscribe from Instantly"). Emits zero items when there's nothing to flag (no separate empty-case handling needed — downstream nodes simply don't run).
+
+**New nodes: `Log Dry-Run Withdrawal to Supabase`** (POST to `campaign_change_logs`, `change_category: 'Cross-Platform Withdrawal (Dry Run)'`, `actioned_by: 'Automated (Dry Run)'`) and **`Notify Dry-Run Withdrawal Match`** (Slack message to the client's channel, clearly labelled DRY RUN, using the same native Slack node + channel-ID handling as `Send Report Message to Slack`).
+
+### Known limitation — this only catches "still enrolled," not literally "every possible lead"
+The HeyReach roster (`connectedLeads`) comes from inbox conversation data (`GetConversationsV2`), which covers everyone with an active conversation thread — a good proxy for "currently being messaged," not a literal export of every lead in every campaign. The Instantly roster is the full paginated lead list (up to 5,000), which is closer to complete. Confidence is always reported as "medium (name+company fuzzy match)" — there is no "high confidence / exact identifier" tier available with the data collected today.
+
+### Original proposed solution (superseded by the above where it assumed a shared identifier)
 - **Instantly reply → stop in HeyReach:** Call `POST /campaign/StopLeadInCampaign` for each matched lead in active HeyReach campaigns
 - **HeyReach reply → unsubscribe in Instantly:** Call `POST /leads/unsubscribe` or mark lead status in Instantly for each matched email
 
-**Implementation notes:**
-- Cross-match must be fuzzy (email normalisation: lowercase, trim)
-- Should only withdraw from campaigns belonging to the same client
-- Withdrawal should be logged to `campaign_change_logs` automatically with `change_category: 'Cross-Platform Withdrawal'`
-- Consider a dry-run mode for initial rollout
-- This gap calls live withdrawal APIs against active leads (real side effects), unlike Gaps 1 and 3 which are read/write against internal Supabase tables — treat as higher-risk and test in dry-run before enabling for real
+**Next step, once dry-run has been verified against real data:** wire the two API calls above behind the existing match detection, replacing the log/notify-only branch (or adding to it) with the actual withdrawal call — gated so it only fires above some confidence bar the team is comfortable with.
 
 ---
 

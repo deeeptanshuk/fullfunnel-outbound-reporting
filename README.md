@@ -148,8 +148,14 @@ See [docs/GAP_TRACKING.md](docs/GAP_TRACKING.md) for full detail.
 | # | Gap | Status |
 |---|-----|--------|
 | 1 | Change logs not broken out by campaign | ✅ Implemented (v1.1) |
-| 2 | No unified cross-platform lead withdrawal | 🔲 Planned |
+| 2 | No unified cross-platform lead withdrawal | 🟡 Dry-run only (v1.3) — detects & logs, does not call withdrawal APIs yet |
 | 3 | No messaging knowledge base | ✅ Implemented (v1.2) |
+
+---
+
+## Cross-Platform Withdrawal (Dry Run)
+
+Every report run also checks whether anyone who replied on Instantly this week is still on HeyReach's roster for the same client (or vice versa) — matched by normalised name + company, since the two platforms don't share a common identifier (no LinkedIn URL on the Instantly side, no email on the HeyReach side). Matches are logged to `campaign_change_logs` (`change_category: 'Cross-Platform Withdrawal (Dry Run)'`) and posted to Slack, clearly labelled **DRY RUN** — no lead is actually stopped or unsubscribed yet. See [docs/GAP_TRACKING.md](docs/GAP_TRACKING.md#gap-2--no-unified-cross-platform-lead-withdrawal).
 
 ---
 

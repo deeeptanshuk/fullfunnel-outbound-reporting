@@ -190,6 +190,7 @@ Merge → Instantly + HeyReach (4 inputs)
   └─ Set → HeyReach Lifetime Data  → input 3
 
 → Compose Combined Report → Has Active Campaigns? → Combined Readout AI Agent → Finalize Document
+→ Cross-Platform Withdrawal Check (parallel branch, v1.3 — see below)
 ```
 
 **`Compose Combined Report`** — Code node. Builds the full Slack message text and the CSV:
@@ -204,6 +205,31 @@ Merge → Instantly + HeyReach (4 inputs)
 **`Combined Readout AI Agent`** — Claude Sonnet 4.6 (no adaptive thinking; speed-optimised). Writes exactly 3 sentences: cross-platform verdict, standout campaign, data-grounded conclusion. Hard rules: no numbers, no maturity caveats unless verdict === 'Early Stage', no recommendations.
 
 **`Finalize Document`** — Replaces `{{COMBINED_READOUT}}` placeholder with the AI paragraph. Re-attaches the CSV binary from `Compose Combined Report`.
+
+---
+
+## Cross-Platform Withdrawal Check (Dry Run, v1.3)
+
+```
+Merge – Instantly + HeyReach → Cross-Platform Withdrawal Check → Log Dry-Run Withdrawal to Supabase
+                                                                → Notify Dry-Run Withdrawal Match
+```
+
+Runs once per client (default Code node behaviour — all of that client's campaign items arrive in one execution), in parallel with `Compose Combined Report`. Does not depend on or block the main report path.
+
+**`Cross-Platform Withdrawal Check`** — reads the raw (pre-AI) `reportData` from every `Merge Report Data` and `Merge Heyreach Nodes Data` execution for this client via named node references:
+- Instantly repliers this window: `reportData.leadsAnalysis.leadsWithReplies` (name, company — populated by `Accumulate Leads`)
+- Instantly full roster: `reportData.leadsAnalysis.allLeadsLite` (name, company, email for every lead, not just repliers — added in v1.3, capped at 5,000 same as the existing pagination limit)
+- HeyReach repliers this window: `reportData.replyAnalysis.replies` (name, company)
+- HeyReach roster: `reportData.leadsAnalysis.connectedLeads` (name, company — everyone with an active conversation thread; exposed in v1.3, previously only its count was surfaced)
+
+For each Instantly replier whose normalised name+company matches someone on the HeyReach roster, emits a dry-run candidate: "would stop in HeyReach." Mirrors the check in the other direction for HeyReach repliers against the Instantly roster: "would unsubscribe from Instantly." No shared high-confidence identifier (email/LinkedIn URL) exists between the two platforms' currently-collected data, so all matches are labelled "medium confidence (name+company fuzzy match)." Emits zero items when there's nothing to flag — downstream nodes simply don't execute for that client, no gate needed.
+
+**`Log Dry-Run Withdrawal to Supabase`** — POSTs each match to `campaign_change_logs` with `change_category: 'Cross-Platform Withdrawal (Dry Run)'`.
+
+**`Notify Dry-Run Withdrawal Match`** — posts each match to the client's Slack channel via the native Slack node (same channel-ID handling as `Send Report Message to Slack`), clearly labelled DRY RUN.
+
+No withdrawal API (`StopLeadInCampaign`, Instantly unsubscribe) is called in this pass — see [docs/GAP_TRACKING.md](GAP_TRACKING.md#gap-2--no-unified-cross-platform-lead-withdrawal) for what's next.
 
 ---
 
