@@ -12,9 +12,9 @@ Automated weekly outbound reporting across **Instantly** (email) and **HeyReach*
 | **Client loop** | Reads all active client configs from Supabase and processes them one by one |
 | **Instantly (Email)** | Fetches active campaigns, analytics, replies, lead counts, and sender accounts |
 | **HeyReach (LinkedIn)** | Fetches active campaigns, overall stats, inbox conversations, and LinkedIn accounts |
-| **AI analysis** | Claude Sonnet 4.6 analyses each campaign individually, then writes a combined executive readout |
+| **AI analysis** | Claude Sonnet 4.6 analyses each campaign individually — informed by this client's messaging knowledge base — then writes a combined executive readout |
 | **Slack output** | Posts a structured Slack message with reply highlights, key insights, and a CSV attachment |
-| **Supabase write** | Saves a weekly snapshot per campaign for historical trend tracking |
+| **Supabase write** | Saves a weekly snapshot and a messaging knowledge base entry per campaign for historical trend tracking |
 
 ---
 
@@ -44,7 +44,7 @@ Required tables:
 - `client_configs` — one row per client, holds API keys and Slack channel
 - `campaign_snapshots` — weekly metrics written after each run
 - `campaign_change_logs` — change audit trail, used by the AI agents
-- `campaign_messaging_kb` — *(planned)* messaging knowledge base
+- `campaign_messaging_kb` — messaging knowledge base, written after each run and read back before every report
 
 ### 2. n8n — Import the Workflow
 
@@ -131,7 +131,13 @@ endDate   = now minus 7 days → end of that week
 
 ## Change Log Deduplication
 
-The AI agents check `campaign_change_logs` before recommending any optimization. If a matching change was logged within the last 14 days, the recommendation is suppressed and replaced with a note indicating the change is in-flight. Change logs are now **filtered per campaign** (not just per client) — see [CHANGELOG.md](CHANGELOG.md).
+The AI agents check `campaign_change_logs` before recommending any optimization. If a matching change was logged within the last 14 days, the recommendation is suppressed and replaced with a note indicating the change is in-flight. Change logs are filtered **per campaign** (not just per client) — see [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Messaging Knowledge Base
+
+Every report run writes a `campaign_messaging_kb` entry per campaign (approach, outcome, verdict) and reads back the client's 15 most recent entries across all campaigns and platforms before generating the next report. This is deliberately **not** filtered to the current campaign — unlike change logs, the goal is surfacing what worked (or didn't) elsewhere for the same client, so a brand-new campaign isn't starting from zero. See [CHANGELOG.md](CHANGELOG.md) and [docs/GAP_TRACKING.md](docs/GAP_TRACKING.md#gap-3--no-messaging-knowledge-base).
 
 ---
 
@@ -143,7 +149,7 @@ See [docs/GAP_TRACKING.md](docs/GAP_TRACKING.md) for full detail.
 |---|-----|--------|
 | 1 | Change logs not broken out by campaign | ✅ Implemented (v1.1) |
 | 2 | No unified cross-platform lead withdrawal | 🔲 Planned |
-| 3 | No messaging knowledge base | 🔲 Planned |
+| 3 | No messaging knowledge base | ✅ Implemented (v1.2) |
 
 ---
 

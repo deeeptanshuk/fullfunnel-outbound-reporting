@@ -125,25 +125,35 @@ create index on public.campaign_change_logs (client_name, campaign_name, actione
 
 ---
 
-## `campaign_messaging_kb` *(Planned — Gap 3)*
+## `campaign_messaging_kb`
 
-Knowledge base of messaging approaches, outcomes, and learnings per campaign. Not yet implemented.
+Knowledge base of messaging approaches, outcomes, and learnings per campaign. Written automatically after every report run; read back at the start of every run so a new campaign for an existing client starts from prior context instead of zero.
 
 ```sql
--- Planned schema — not active
 create table public.campaign_messaging_kb (
   id              uuid primary key default gen_random_uuid(),
   client_name     text not null,
+  campaign_id     text not null,
   campaign_name   text,
-  platform        text,
-  icp_segment     text,
-  approach        text,      -- what was tried
-  outcome         text,      -- what happened
-  verdict         text,      -- AI verdict at the time
-  week_of         date,
-  created_at      timestamptz not null default now()
+  platform        text not null check (platform in ('instantly', 'heyreach')),
+  icp_segment     text,       -- not yet populated by the workflow; reserved for future ICP tagging
+  approach        text,       -- primary signal + what's working / areas to watch, derived from that week's AI output
+  outcome         text,       -- that week's executive summary
+  verdict         text,       -- AI verdict at the time (e.g. 'Strong Performance', 'Low Reply Rate')
+  week_of         date not null,
+  created_at      timestamptz not null default now(),
+
+  unique (campaign_id, week_of)
 );
+
+create index on public.campaign_messaging_kb (client_name, week_of desc);
 ```
+
+**Notes:**
+- The unique constraint on `(campaign_id, week_of)` makes writes idempotent, same pattern as `campaign_snapshots`
+- The workflow queries this table **per client, not per campaign** — up to the 15 most recent entries across all of that client's campaigns and platforms — so a new campaign can learn from what worked (or didn't) elsewhere for the same client
+- `icp_segment` is reserved for when ICP tagging is added to `client_configs` or `campaign_change_logs`; currently always null
+- `approach` and `outcome` are derived directly from the same AI agent output used for `campaign_snapshots.recommendations` / `raw_ai_insights` — no extra AI call is made to populate this table
 
 ---
 
@@ -155,4 +165,5 @@ The workflow uses the **service role key**, which bypasses RLS. If you expose an
 alter table public.client_configs enable row level security;
 alter table public.campaign_snapshots enable row level security;
 alter table public.campaign_change_logs enable row level security;
+alter table public.campaign_messaging_kb enable row level security;
 ```

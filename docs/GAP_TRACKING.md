@@ -34,10 +34,13 @@ function filterLogsByCampaign(logs, campaignName) {
 }
 ```
 
-Each campaign now receives only its own change logs. Logs without `campaign_name` are treated as client-wide and included for all campaigns.
+Each campaign now receives only its own change logs — including the `Campaign Context` lookup, which previously scanned the unfiltered list and could surface another campaign's note. Logs without `campaign_name` are treated as client-wide and included for all campaigns.
 
 ### Prerequisite
 `campaign_change_logs` table must have a `campaign_name` column (text, nullable). See [SUPABASE_SCHEMA.md](SUPABASE_SCHEMA.md).
+
+### Note — live/GitHub drift (found & fixed 2026-07-31, v1.2)
+The live n8n workflow was built before this fix landed and had never received it — `filterLogsByCampaign` existed in the GitHub JSON but not in the actual running workflow. This was discovered and corrected while implementing Gap 3 (same two code nodes needed touching either way). Live and GitHub are now in sync.
 
 ---
 
@@ -62,26 +65,26 @@ After collecting replies from each platform, match repliers across platforms by 
 - Should only withdraw from campaigns belonging to the same client
 - Withdrawal should be logged to `campaign_change_logs` automatically with `change_category: 'Cross-Platform Withdrawal'`
 - Consider a dry-run mode for initial rollout
+- This gap calls live withdrawal APIs against active leads (real side effects), unlike Gaps 1 and 3 which are read/write against internal Supabase tables — treat as higher-risk and test in dry-run before enabling for real
 
 ---
 
 ## Gap 3 — No messaging knowledge base
 
-**Status:** 🔲 Planned
+**Status:** ✅ Resolved in v1.2 (2026-07-31)
 
 ### Problem
 No repository of past messaging approaches, subject lines, or sequence structures by client, campaign, or ICP segment. Every new campaign starts from zero. Known successes and failures are lost between reporting cycles.
 
-### Proposed solution
-After each report run, write a structured entry to a `campaign_messaging_kb` Supabase table capturing:
-- What messaging approach was in use (subject line themes, CTA type, sequence length)
-- The AI verdict for that week
-- The reply sentiment breakdown
-- Key insights (What's Working / Areas to Watch)
+### Fix
+Added a `campaign_messaging_kb` Supabase table (see [SUPABASE_SCHEMA.md](SUPABASE_SCHEMA.md)) with a read step and a write step in the live workflow:
 
-At the start of a new campaign's first report, query the knowledge base for entries matching the same client or similar ICP segment and inject them into the AI agent prompt as prior context.
+**Write step** — `Prepare Instantly KB Entry` / `Prepare HeyReach KB Entry` run off `Parse Instantly Output` / `Parse HeyReach Output` (parallel to the existing snapshot-write branch) and derive `approach` (primary signal + what's working / areas to watch), `outcome` (executive summary), and `verdict` directly from that week's AI agent output — no extra AI call. `Write Instantly/HeyReach KB Entry to Supabase` upsert on `(campaign_id, week_of)`.
 
-**Implementation notes:**
-- Write step: add a node after `Finalize Document` that calls an AI agent to summarise the week's messaging approach and writes to `campaign_messaging_kb`
-- Read step: add a node in the data collection phase that queries the KB and includes it in `reportData` for the AI agents
-- Schema: see `campaign_messaging_kb` placeholder in [SUPABASE_SCHEMA.md](SUPABASE_SCHEMA.md)
+**Read step** — `Fetch Messaging KB` queries the client's most recent 15 KB entries across **all** of their campaigns and platforms (deliberately not filtered to the current campaign, unlike change logs — the point is cross-campaign learning). `Normalize Messaging KB` parses the response the same way `Normalize Client History` does. Both feed into `Merge` / `Merge all heyreach nodes data` as a new synchronization input, and `Merge Report Data` / `Merge Heyreach Nodes Data` attach the result to `reportData.priorMessagingContext`.
+
+Both AI agent system prompts (`Instantly Outbound Reporting AI Agent`, `Heyreach Outbound Reporting AI Agent`) now have a "PRIOR MESSAGING CONTEXT" instruction block telling the model to avoid re-recommending approaches already shown to fail for this client, and to call out cross-campaign/cross-platform patterns when relevant.
+
+**Not included in this pass:**
+- `icp_segment` is not populated — there's no ICP tagging anywhere upstream yet (`client_configs`, `campaign_change_logs`). The column exists in the schema for when that's added.
+- No dedicated summarisation AI call — the KB entry is derived from the existing structured AI output fields, which keeps this cheap and avoids adding a model call that wasn't clearly needed yet. If `approach`/`outcome` prove too thin in practice (e.g. teams want actual subject-line text captured), revisit with a dedicated summarisation step.

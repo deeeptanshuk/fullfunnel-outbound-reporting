@@ -43,19 +43,21 @@ Fetch Client Configs → Loop active clients → Workflow Configuration
 
 ## Platform Branching
 
-After `Filter Webhook Client`, execution splits into two parallel tracks plus a shared history fetch:
+After `Filter Webhook Client`, execution splits into two parallel tracks plus two shared fetches:
 
 ```
 Filter Webhook Client
   ├─→ Check Instantly Key  (email track)
   ├─→ Check HeyReach Key   (LinkedIn track)
-  └─→ Fetch Client History (shared — feeds both tracks)
+  ├─→ Fetch Client History (shared — feeds both tracks)
+  └─→ Fetch Messaging KB   (shared — feeds both tracks)
 ```
 
 ### Shared History Fetch
 
 ```
 Fetch Client History → Fetch Campaign Change Logs → Normalize Client History
+Fetch Messaging KB → Normalize Messaging KB
 ```
 
 **`Fetch Client History`** — Reads `campaign_snapshots` for this client ordered by `reporting_window_end desc`. Used by AI agents to surface previous-window comparison.
@@ -64,7 +66,11 @@ Fetch Client History → Fetch Campaign Change Logs → Normalize Client History
 
 **`Normalize Client History`** — Code node that parses the Supabase array response into n8n items, with a safe fallback for empty history.
 
-Normalized history then feeds into both the Instantly `Merge` node (input 5) and the HeyReach `Merge all heyreach nodes data` node (input 4).
+**`Fetch Messaging KB`** — Reads up to the 15 most recent `campaign_messaging_kb` rows for this client, ordered by `week_of desc`. Deliberately queried **per client, not per campaign** — the goal is surfacing what worked (or didn't) on this client's other campaigns and platforms, not just this campaign's own history.
+
+**`Normalize Messaging KB`** — Same parsing pattern as `Normalize Client History`, with an `is_empty_kb` fallback for clients with no KB history yet.
+
+Normalized history and KB entries then feed into both the Instantly `Merge` node (inputs 5 and 6) and the HeyReach `Merge all heyreach nodes data` node (inputs 4 and 5).
 
 ---
 
@@ -109,20 +115,21 @@ All six branches fire simultaneously:
 ### Merge & Report Assembly
 
 ```
-Merge (6 inputs) → Merge Report Data → Instantly Outbound Reporting AI Agent → Parse Instantly Output
+Merge (7 inputs) → Merge Report Data → Instantly Outbound Reporting AI Agent → Parse Instantly Output
 ```
 
-**`Merge`** — `chooseBranch` mode with 6 inputs. Waits for all branches to complete before passing data downstream.
+**`Merge`** — `chooseBranch` mode with 7 inputs (added `Normalize Messaging KB` as input 6 in v1.2). Waits for all branches to complete before passing data downstream — a synchronization barrier; `Merge Report Data` reads each source by name, not from this node's own passthrough output.
 
 **`Merge Report Data`** — Code node. The core aggregation step:
 1. Indexes analytics, campaign data, leads, accounts, replies, and lifetime stats by campaign ID
 2. Builds per-campaign `reportData` objects
-3. **Filters `campaign_change_logs` to the current campaign** using `filterLogsByCampaign()` (fuzzy name match; logs without `campaign_name` are treated as client-wide)
-4. Filters replies to the reporting window, strips OOO/auto-replies
-5. Looks up previous snapshot for trend context
-6. Outputs one item per active campaign
+3. **Filters `campaign_change_logs` to the current campaign** using `filterLogsByCampaign()` (fuzzy name match; logs without `campaign_name` are treated as client-wide) — including the `Campaign Context` lookup
+4. **Attaches `priorMessagingContext`** — this client's recent `campaign_messaging_kb` entries across all campaigns/platforms, unfiltered by campaign (v1.2)
+5. Filters replies to the reporting window, strips OOO/auto-replies
+6. Looks up previous snapshot for trend context
+7. Outputs one item per active campaign
 
-**`Instantly Outbound Reporting AI Agent`** — Claude Sonnet 4.6 with adaptive thinking. Receives `reportData` JSON and outputs a structured JSON analysis object. See README for verdict rules and tone guidelines.
+**`Instantly Outbound Reporting AI Agent`** — Claude Sonnet 4.6 with adaptive thinking. Receives `reportData` JSON and outputs a structured JSON analysis object. Its system prompt has a "PRIOR MESSAGING CONTEXT" section (v1.2) instructing it to avoid re-recommending approaches `priorMessagingContext` shows already failed for this client, and to call out cross-campaign patterns when relevant. See README for verdict rules and tone guidelines.
 
 **`Parse Instantly Output`** — Code node. Extracts the JSON from the AI text output, enforces a strict schema (all fields defaulted, no undefined), and attaches `platform: 'instantly'`.
 
@@ -156,7 +163,7 @@ Check HeyReach Key → Retrieve all campaigns → Match Heyreach Campaign Name
 ### Merge & Report Assembly
 
 ```
-Merge all heyreach nodes data (5 inputs) → Merge Heyreach Nodes Data → Heyreach Outbound Reporting AI Agent → Parse HeyReach Output
+Merge all heyreach nodes data (6 inputs) → Merge Heyreach Nodes Data → Heyreach Outbound Reporting AI Agent → Parse HeyReach Output
 ```
 
 **`Merge Heyreach Nodes Data`** — Code node equivalent to `Merge Report Data` but for LinkedIn:
@@ -164,9 +171,10 @@ Merge all heyreach nodes data (5 inputs) → Merge Heyreach Nodes Data → Heyre
 2. Classifies reply sentiment (positive / neutral / negative / informational) using keyword matching
 3. Filters inbox conversations to replies that fall within the reporting window
 4. **Filters `campaign_change_logs` to the current campaign** (same `filterLogsByCampaign()` helper as Instantly track)
-5. Outputs one item per active campaign
+5. **Attaches `priorMessagingContext`** — same client-wide KB lookup as the Instantly track (v1.2)
+6. Outputs one item per active campaign
 
-**`Heyreach Outbound Reporting AI Agent`** — Claude Sonnet 4.6. Same pattern as Instantly agent but with LinkedIn-specific schema and verdict rules.
+**`Heyreach Outbound Reporting AI Agent`** — Claude Sonnet 4.6. Same pattern as Instantly agent but with LinkedIn-specific schema, verdict rules, and the same "PRIOR MESSAGING CONTEXT" prompt section (v1.2).
 
 **`Parse HeyReach Output`** — Enforces strict schema; attaches `platform: 'heyreach'`.
 
@@ -213,14 +221,20 @@ Uses Slack's two-step external upload API:
 
 ---
 
-## Snapshot Writes (parallel with Slack delivery)
+## Snapshot & Knowledge Base Writes (parallel with Slack delivery)
 
 ```
-Parse Instantly Output → Prepare Instantly Snapshot → Write Instantly Snapshot to Supabase
-Parse HeyReach Output  → Prepare HeyReach Snapshot  → Write HeyReach Snapshot to Supabase
+Parse Instantly Output → Prepare Instantly Snapshot  → Write Instantly Snapshot to Supabase
+Parse Instantly Output → Prepare Instantly KB Entry   → Write Instantly KB Entry to Supabase
+Parse HeyReach Output  → Prepare HeyReach Snapshot    → Write HeyReach Snapshot to Supabase
+Parse HeyReach Output  → Prepare HeyReach KB Entry     → Write HeyReach KB Entry to Supabase
 ```
 
 Snapshots are upserted on `(campaign_id, reporting_window_start, reporting_window_end)` so re-runs are idempotent.
+
+**`Prepare Instantly KB Entry` / `Prepare HeyReach KB Entry`** (v1.2) — Code nodes that build a `campaign_messaging_kb` row directly from that week's parsed AI output: `approach` is the primary signal plus what's-working/areas-to-watch, `outcome` is the executive summary, `verdict` is the AI verdict. No extra AI call — this reuses output already computed for the report and the snapshot write. `icp_segment` is left null (no ICP tagging exists upstream yet).
+
+**`Write Instantly/HeyReach KB Entry to Supabase`** — POST to `campaign_messaging_kb` upserted on `(campaign_id, week_of)`, same idempotency pattern as the snapshot writes.
 
 ---
 

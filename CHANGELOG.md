@@ -4,6 +4,28 @@ All notable changes to this workflow are documented here.
 
 ---
 
+## [v1.2] — 2026-07-31
+
+### Added — Messaging knowledge base (Gap 3)
+
+**Nodes added:** `Fetch Messaging KB`, `Normalize Messaging KB`, `Prepare Instantly KB Entry`, `Write Instantly KB Entry to Supabase`, `Prepare HeyReach KB Entry`, `Write HeyReach KB Entry to Supabase`
+
+**New table:** `campaign_messaging_kb` (see [SUPABASE_SCHEMA.md](docs/SUPABASE_SCHEMA.md)) — run the migration before activating.
+
+- After every report, each campaign's `approach`, `outcome`, and `verdict` are written to `campaign_messaging_kb`, derived from that week's AI output (no extra AI call)
+- Before generating a report, the workflow now reads the client's 15 most recent KB entries across **all** of their campaigns and platforms and passes them to both AI agents as `reportData.priorMessagingContext`
+- Both AI agent prompts now instruct the model to avoid recommending approaches already shown to fail for this client, and to flag cross-campaign/cross-platform patterns
+
+**Why this matters:** Previously every new campaign for an existing client started from zero — no visibility into what messaging had already been tried. Now a client's other campaigns (and other platforms) inform each new one's analysis from week one.
+
+**Gap closed:** Gap 3 — No messaging knowledge base ✅
+
+### Fixed — Gap 1 live/GitHub drift
+
+The live n8n workflow predated the v1.1 `filterLogsByCampaign` fix below — it had never been applied to the running workflow, only committed here. Backported while touching `Merge Report Data` and `Merge Heyreach Nodes Data` for the KB work above; also extended the fix to the `Campaign Context` lookup, which previously scanned the unfiltered change-log list.
+
+---
+
 ## [v1.1] — 2026-07-31
 
 ### Changed — Campaign-level change log filtering
