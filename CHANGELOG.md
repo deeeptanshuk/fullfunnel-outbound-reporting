@@ -4,6 +4,42 @@ All notable changes to this workflow are documented here.
 
 ---
 
+## [v1.5] — 2026-08-04
+
+### Fixed — HeyReach `campaign_id` fallback stored the campaign name instead of the real numeric ID
+
+`Prepare HeyReach Snapshot`'s `campaign_id` fallback chain (`item.campaignConfig?.id || item.campaignOverview?.campaignId || Number($json.matchedCampaignId) || item.campaignName`) always fell through to the campaign name, because `$json.matchedCampaignId` does not survive through the AI Agent node's structured output (`Number(undefined)` is `NaN`, which is falsy). Confirmed via live testing against two different clients (PLANHUB, CONSTELLATION) — every historical `campaign_snapshots` row for HeyReach had the name stored where the numeric ID should be.
+
+Fixed by looking up the real numeric ID directly from `Match Heyreach Campaign Name - Exist or not` (the node that actually captures it from HeyReach's live API, before the AI agent runs), matched by campaign name. Verified live post-fix: a fresh HeyReach snapshot row now correctly stores the real numeric ID (e.g. `516758`) instead of the name.
+
+**Why this matters:** the Slack Command Handler's campaign dropdown builds its value directly from `campaign_snapshots.campaign_id`. With the name stored there instead of the ID, any change a person logged in Slack against a HeyReach campaign would carry the wrong identifier and could silently fail Gap 1's per-campaign filtering — the exact class of bug Gap 1 was built to prevent, just introduced from a different angle.
+
+### Fixed — `previousSnapshot` (week-over-week trend comparison) never actually populated, for any client, on either platform
+
+Two separate bugs compounded to make this feature a no-op since it was first built:
+
+1. **`Normalize Client History`** had the same parsing bug later found in `Normalize Messaging KB` (see v1.2's KB fix below) — it assumed the first fetched Supabase row already contained an array, when Supabase actually returns one n8n item per row. Result: `Normalize Client History` always emitted `{ is_empty_history: true }`, so `previousSnapshot` was always `null` on both platforms, regardless of how much real history existed. Fixed with the same "map over all returned items" pattern as the KB fix.
+
+2. **Instantly-specific identifier mismatch**, found after fixing #1: `Merge Report Data`'s `previousSnapshot` lookup matched `campaign_snapshots.campaign_id` against the real Instantly campaign ID (`matchData.matchedCampaignId`), but `Prepare Instantly Snapshot` stores the campaign **name** there (Instantly's existing, correct convention — see Gap 1 below). Since the lookup searched for the wrong identifier type, it could never match, even with #1 fixed. Fixed by matching against `targetCampaignName` instead, consistent with how change-log filtering already works in the same function. HeyReach's equivalent lookup already used the real numeric ID correctly and needed no change, since HeyReach's snapshot storage convention is the real ID (see the v1.5 fix above).
+
+Both fixes verified via live execution data inspection; full end-to-end proof (a real second week of history for the same campaign) is still pending, since the currently active test campaigns are too new to have a genuinely prior week to match against.
+
+### Fixed — Change-log entries reaching the AI were duplicated up to 11x
+
+`Fetch Campaign Change Logs` sits downstream of `Fetch Client History` in the node graph. Since `Fetch Client History` can return multiple items (one per historical snapshot row), the change-log fetch — which is client-wide, not per-item — re-ran redundantly once per upstream item, producing many duplicate copies of the same rows. Confirmed via live execution: 11 copies of a single change-log row reached the AI agent's context in one run. Per-campaign filtering correctness itself was unaffected (verified no cross-campaign leakage), this was pure wasted duplicate content, and wasted tokens sent to Anthropic on every run.
+
+Fixed by deduplicating by row `id` immediately after reading `Fetch Campaign Change Logs`' output, in both `Merge Report Data` and `Merge Heyreach Nodes Data`. Verified live post-fix: change-log count per campaign dropped from 11 to 1.
+
+### Testing — Gap 1 re-confirmed live against a second client
+
+Re-ran Gap 1 verification against CONSTELLATION (in addition to the original PLANHUB testing in v1.4), covering both an Instantly campaign (name-keyed) and a HeyReach campaign (numeric-ID-keyed). Confirmed no cross-campaign leakage in either case, and confirmed the existing asymmetry (Instantly uses the campaign name as its real, working identifier throughout; HeyReach uses the real numeric ID) is a deliberate, working design choice, not a bug — see Gap 1 notes in `docs/GAP_TRACKING.md`.
+
+### In progress — production cutover
+
+Reverted all testing-only shortcuts added during this round of testing: the hardcoded test Slack channel across all 6 Slack-output nodes (restored to each client's real channel, pulled dynamically from `client_configs`), and the temporary single-client filter on `Fetch Client Configs` (restored to processing every active client). The workflow remains **inactive** pending two coordination items with the separate production n8n account this replaces: (1) confirming the real production Slack bot credentials vs. continuing with the dedicated test bot, and (2) sequencing deactivation of the old workflow with activation of this one, to avoid a window where both could run.
+
+---
+
 ## [v1.4] — 2026-08-01
 
 ### Fixed — Gap 1 change-log filtering was matching a nonexistent column
