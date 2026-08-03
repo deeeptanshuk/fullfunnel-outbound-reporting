@@ -14,6 +14,12 @@ Fixed by looking up the real numeric ID directly from `Match Heyreach Campaign N
 
 **Why this matters:** the Slack Command Handler's campaign dropdown builds its value directly from `campaign_snapshots.campaign_id`. With the name stored there instead of the ID, any change a person logged in Slack against a HeyReach campaign would carry the wrong identifier and could silently fail Gap 1's per-campaign filtering — the exact class of bug Gap 1 was built to prevent, just introduced from a different angle.
 
+### Fixed — HeyReach change logs could be permanently lost during the ID migration
+
+The fix above (real numeric HeyReach `campaign_id`) created a gap: the Slack Command Handler's dropdown builds its value from whatever's currently in `campaign_snapshots.campaign_id`, so a change logged via Slack *before* a campaign's snapshot refreshed under the new numeric ID would be saved under the old campaign name instead. Unlike `campaign_snapshots` (rewritten every week), `campaign_change_logs` is write-once — so that note would never match the report filter again, silently, forever.
+
+Fixed by having `Merge Heyreach Nodes Data`'s `filterLogsForCampaign` accept either the real numeric ID or the campaign's current name, so a note lands correctly regardless of which era it was logged in. No manual data cleanup needed.
+
 ### Fixed — `previousSnapshot` (week-over-week trend comparison) never actually populated, for any client, on either platform
 
 Two separate bugs compounded to make this feature a no-op since it was first built:
