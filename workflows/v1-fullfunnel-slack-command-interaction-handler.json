@@ -1,0 +1,804 @@
+{
+  "name": "FullFunnel // Slack Command & Interaction Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack/slash-command",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b0da2d11-30fa-4f5c-a134-2c4a60ec3f37",
+      "name": "Slash Command Log Change",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1088,
+        96
+      ],
+      "webhookId": "log-change-cmd-webhook-id"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "options": {}
+      },
+      "id": "1e2ec6df-8d0f-43de-ad9c-a78d6f9a2c53",
+      "name": "Respond Slash 200 OK (Log Change)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -864,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://burcfsxsxgabknmodsrd.supabase.co/rest/v1/client_configs?is_active=eq.true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "59e667f3-a49e-4b45-81c6-0eb9e9351dd6",
+      "name": "Fetch Active Clients",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -864,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// DYNAMICALLY BUILD SLACK MODAL PAYLOAD WITH ACTIVE CLIENTS\n// ============================================================\nconst triggerId = $('Slash Command Log Change').item.json.body.trigger_id;\nconst channelId = $('Slash Command Log Change').item.json.body.channel_id;\n\nconst clientOptions = $input.all().map(item => {\n  const name = item.json.client_name;\n  return {\n    text: { type: 'plain_text', text: name },\n    value: name\n  };\n});\n\nconst view = {\n  type: 'modal',\n  callback_id: 'log_campaign_change',\n  private_metadata: channelId,\n  title: { type: 'plain_text', text: 'Log Campaign Change' },\n  submit: { type: 'plain_text', text: 'Submit' },\n  close: { type: 'plain_text', text: 'Cancel' },\n  blocks: [\n    {\n      type: 'input',\n      block_id: 'client_block',\n      dispatch_action: true,\n      element: {\n        type: 'static_select',\n        action_id: 'client_select',\n        placeholder: { type: 'plain_text', text: 'Select client' },\n        options: clientOptions\n      },\n      label: { type: 'plain_text', text: 'Client Name' }\n    },\n    {\n      type: 'input',\n      block_id: 'category_block',\n      element: {\n        type: 'static_select',\n        action_id: 'category_select',\n        placeholder: { type: 'plain_text', text: 'Select category' },\n        options: [\n          { text: { type: 'plain_text', text: 'Subject Line' }, value: 'Subject Line' },\n          { text: { type: 'plain_text', text: 'Body Copy' }, value: 'Body Copy' },\n          { text: { type: 'plain_text', text: 'ICP Target' }, value: 'ICP Target' },\n          { text: { type: 'plain_text', text: 'Sender Account' }, value: 'Sender Account' }\n        ]\n      },\n      label: { type: 'plain_text', text: 'Change Category' }\n    },\n    {\n      type: 'input',\n      block_id: 'description_block',\n      element: {\n        type: 'plain_text_input',\n        action_id: 'description_input',\n        multiline: true,\n        placeholder: { type: 'plain_text', text: 'What changed, why, and expected impact...' }\n      },\n      label: { type: 'plain_text', text: 'Description of Change' }\n    }\n  ]\n};\n\nreturn [{ json: { trigger_id: triggerId, view: view } }];"
+      },
+      "id": "44ca15cf-92eb-41cf-a233-4c9755e71a14",
+      "name": "Build Slack Modal Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/views.open",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SLACK_BOT_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "e03227d9-e5e5-4ff4-84f2-6377b559f0eb",
+      "name": "Open Slack Modal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -416,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack/add-client",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "9dbb3652-5228-47dc-8876-2102fca5d88c",
+      "name": "Slash Command Add Client",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1088,
+        896
+      ],
+      "webhookId": "add-client-webhook-id"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "options": {}
+      },
+      "id": "66e8f67d-5028-4f8d-a5e7-f209fdb5a35f",
+      "name": "Respond Slash 200 OK (Add Client)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -864,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/views.open",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SLACK_BOT_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"trigger_id\": \"{{ $json.body.trigger_id }}\",\n  \"view\": {\n    \"type\": \"modal\",\n    \"callback_id\": \"onboard_client_modal\",\n    \"private_metadata\": \"{{ $json.body.channel_id }}\",\n    \"title\": {\n      \"type\": \"plain_text\",\n      \"text\": \"Onboard New Client\"\n    },\n    \"submit\": {\n      \"type\": \"plain_text\",\n      \"text\": \"Onboard\"\n    },\n    \"close\": {\n      \"type\": \"plain_text\",\n      \"text\": \"Cancel\"\n    },\n    \"blocks\": [\n      {\n        \"type\": \"input\",\n        \"block_id\": \"client_name_block\",\n        \"element\": {\n          \"type\": \"plain_text_input\",\n          \"action_id\": \"client_name_input\",\n          \"placeholder\": {\n            \"type\": \"plain_text\",\n            \"text\": \"e.g. APRIKA\"\n          }\n        },\n        \"label\": {\n          \"type\": \"plain_text\",\n          \"text\": \"Client Name\"\n        }\n      },\n      {\n        \"type\": \"input\",\n        \"block_id\": \"slack_channel_block\",\n        \"element\": {\n          \"type\": \"plain_text_input\",\n          \"action_id\": \"slack_channel_input\",\n          \"placeholder\": {\n            \"type\": \"plain_text\",\n            \"text\": \"e.g. C0BA2QABKN0\"\n          }\n        },\n        \"label\": {\n          \"type\": \"plain_text\",\n          \"text\": \"Slack Channel ID\"\n        }\n      },\n      {\n        \"type\": \"input\",\n        \"block_id\": \"instantly_api_key_block\",\n        \"optional\": true,\n        \"element\": {\n          \"type\": \"plain_text_input\",\n          \"action_id\": \"instantly_api_key_input\",\n          \"placeholder\": {\n            \"type\": \"plain_text\",\n            \"text\": \"Optional - Instantly API Key\"\n          }\n        },\n        \"label\": {\n          \"type\": \"plain_text\",\n          \"text\": \"Instantly API Key\"\n        }\n      },\n      {\n        \"type\": \"input\",\n        \"block_id\": \"heyreach_api_key_block\",\n        \"optional\": true,\n        \"element\": {\n          \"type\": \"plain_text_input\",\n          \"action_id\": \"heyreach_api_key_input\",\n          \"placeholder\": {\n            \"type\": \"plain_text\",\n            \"text\": \"Optional - HeyReach API Key\"\n          }\n        },\n        \"label\": {\n          \"type\": \"plain_text\",\n          \"text\": \"HeyReach API Key\"\n        }\n      }\n    ]\n  }\n}",
+        "options": {}
+      },
+      "id": "5a53ff1f-0077-4376-a8e4-b2b0074ac2db",
+      "name": "Open Add Client Modal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -864,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack/interactions",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "bbb343ee-5dc9-4c98-8c71-27c99a3b0e7d",
+      "name": "Slack Interactions Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1088,
+        1312
+      ],
+      "webhookId": "slack-interactions-id"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "options": {}
+      },
+      "id": "99fae46e-8bd4-4ce2-8e90-ae8b1274ebf5",
+      "name": "Respond Interactions 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -864,
+        1216
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// PARSE NESTED SLACK INTERACTION SUBMISSION PAYLOAD\n// ============================================================\nconst rawPayload = $json.raw_body.payload;\nconst payload = JSON.parse(rawPayload);\nconst values = payload.view.state.values;\nconst callbackId = payload.view.callback_id;\nconst username = payload.user.name || 'unknown_analyst';\nconst channelId = payload.view.private_metadata || null;\n\nif (callbackId === 'log_campaign_change') {\n  const clientName = values.client_block.client_select.selected_option.value;\n  const category = values.category_block.category_select.selected_option.value;\n  const description = values.description_block.description_input.value;\n\n  let campaignSelections = [];\n  const multiSelected = values.campaign_multi_block && values.campaign_multi_block.campaign_multi_select && values.campaign_multi_block.campaign_multi_select.selected_options;\n  if (multiSelected && multiSelected.length > 0) {\n    campaignSelections = multiSelected.map(opt => {\n      const parts = opt.value.split('::');\n      return { platform: parts[0], campaign_id: parts[1], campaign_name: parts[2] };\n    });\n  } else if (values.campaign_fallback_block) {\n    const campaignNameFree = (values.campaign_fallback_block.campaign_fallback_input.value || '').trim() || 'Unspecified Campaign';\n    const platformFallback = (values.platform_fallback_block && values.platform_fallback_block.platform_fallback_select && values.platform_fallback_block.platform_fallback_select.selected_option) ? values.platform_fallback_block.platform_fallback_select.selected_option.value : 'general';\n    campaignSelections = [{\n      platform: platformFallback,\n      campaign_id: 'campaign_' + platformFallback + '_' + campaignNameFree.toLowerCase().replace(/\\s+/g, '_'),\n      campaign_name: campaignNameFree\n    }];\n  }\n\n  return campaignSelections.map(sel => ({\n    json: {\n      callback_id: callbackId,\n      client_name: clientName,\n      campaign_id: sel.campaign_id,\n      campaign_name: sel.campaign_name,\n      platform: sel.platform,\n      change_category: category,\n      change_description: description,\n      actioned_by: username,\n      channel_id: channelId\n    }\n  }));\n} else if (callbackId === 'log_bulk_context') {\n  const results = [];\n  Object.keys(values).forEach(blockId => {\n    if (blockId.startsWith('context_block_')) {\n      const clientName = blockId.replace('context_block_', '');\n      const val = values[blockId].context_input.value;\n      if (val && val.trim()) {\n        results.push({\n          json: {\n            callback_id: callbackId,\n            client_name: clientName,\n            campaign_id: 'campaign_context_' + clientName.toLowerCase(),\n            platform: 'general',\n            change_category: 'Campaign Context',\n            change_description: val.trim(),\n            actioned_by: username,\n            channel_id: channelId\n          }\n        });\n      }\n    }\n  });\n  return results;\n} else if (callbackId === 'onboard_client_modal') {\n  const clientName = values.client_name_block.client_name_input.value.trim().toUpperCase();\n  const slackChannel = values.slack_channel_block.slack_channel_input.value.trim();\n  const instantlyApiKey = values.instantly_api_key_block.instantly_api_key_input.value ? values.instantly_api_key_block.instantly_api_key_input.value.trim() : null;\n  const heyreachApiKey = values.heyreach_api_key_block.heyreach_api_key_input.value ? values.heyreach_api_key_block.heyreach_api_key_input.value.trim() : null;\n\n  return [{  json: {\n      callback_id: callbackId,\n      client_name: clientName,\n      slack_channel: slackChannel,\n      instantly_api_key: instantlyApiKey,\n      heyreach_api_key: heyreachApiKey,\n      is_active: true,\n      actioned_by: username,\n      channel_id: channelId\n    }\n  }];\n}\n\nreturn [];"
+      },
+      "id": "de99b21e-4697-45ce-a426-9c5acc5e8df6",
+      "name": "Parse Slack Interaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        1408
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.callback_id.startsWith('log_') }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "63c791f1-85e7-4fa2-91f1-90b9b160f4ac",
+      "name": "Is Log Change?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        1408
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://burcfsxsxgabknmodsrd.supabase.co/rest/v1/campaign_change_logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  client_name: $json.client_name,\n  campaign_id: $json.campaign_id,\n  platform: $json.platform,\n  change_category: $json.change_category,\n  change_description: $json.change_description,\n  actioned_by: $json.actioned_by + ' (Slack)'\n} }}",
+        "options": {}
+      },
+      "id": "ab42284c-ff58-4529-b76f-b7f9f5cb0a1f",
+      "name": "Write Change Log to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -416,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://burcfsxsxgabknmodsrd.supabase.co/rest/v1/client_configs?on_conflict=client_name",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  client_name: $json.client_name,\n  slack_channel: $json.slack_channel,\n  instantly_api_key: $json.instantly_api_key,\n  heyreach_api_key: $json.heyreach_api_key,\n  is_active: $json.is_active\n} }}",
+        "options": {}
+      },
+      "id": "88cefe6c-adfd-4fd8-ad2e-44d61dfe31ad",
+      "name": "Write Client Config to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -416,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SLACK_BOT_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  channel: $('Parse Slack Interaction').item.json.channel_id || $('Parse Slack Interaction').item.json.slack_channel,\n  text: `\ud83d\ude80 *New Client registered in Supabase \\`client_configs\\` table successfully!*\\n\\n*Client Name:* \\`${$('Parse Slack Interaction').item.json.client_name}\\`\\n*Slack Channel:* \\`${$('Parse Slack Interaction').item.json.slack_channel}\\`\\n*Instantly API Key Set:* \\`${$('Parse Slack Interaction').item.json.instantly_api_key ? 'Yes' : 'No'}\\`\\n*HeyReach API Key Set:* \\`${$('Parse Slack Interaction').item.json.heyreach_api_key ? 'Yes' : 'No'}\\`\\n*Actioned By:* \\`${$('Parse Slack Interaction').item.json.actioned_by}\\``\n} }}",
+        "options": {}
+      },
+      "id": "2ddd78e7-cc36-447f-949d-33f14b8592c8",
+      "name": "Post Onboarding Confirmation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -192,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SLACK_BOT_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { channel: $json.channel_id, text: $json.text } }}",
+        "options": {}
+      },
+      "id": "post-change-log-confirmation-id",
+      "name": "Post Change Log Confirmation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -192,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack/log-context",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "slash-command-log-context-id",
+      "name": "Slash Command Log Context",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1088,
+        480
+      ],
+      "webhookId": "58714d54-c285-4c27-b8d2-384c363a6469"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "options": {}
+      },
+      "id": "respond-slash-200-ok-log-context-id",
+      "name": "Respond Slash 200 OK (Log Context)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -864,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://burcfsxsxgabknmodsrd.supabase.co/rest/v1/client_configs",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "is_active",
+              "value": "eq.true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-active-clients-context-id",
+      "name": "Fetch Active Clients (Context)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -864,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// DYNAMICALLY BUILD SLACK BULK CONTEXT MODAL PAYLOAD\n// ============================================================\nconst triggerId = $('Slash Command Log Context').item?.json?.body?.trigger_id;\nconst channelId = $('Slash Command Log Context').item?.json?.body?.channel_id;\n\nconst clients = $input.all();\nconst blocks = [\n  {\n    type: \"section\",\n    text: {\n      type: \"mrkdwn\",\n      text: \"\ud83d\udcdd *Log Weekly Strategic Context for Active Clients*\\nProvide strategic context (e.g., body copy A/B tests, sequence pauses, target audience changes) for the AI report. Leave fields blank for clients that do not have updates.\"\n    }\n  },\n  {\n    type: \"divider\"\n  }\n];\n\nclients.forEach(item => {\n  const clientName = item.json.client_name;\n  blocks.push({\n    type: \"input\",\n    block_id: \"context_block_\" + clientName,\n    optional: true,\n    element: {\n      type: \"plain_text_input\",\n      action_id: \"context_input\",\n      multiline: true,\n      placeholder: {\n        type: \"plain_text\",\n        text: \"Any updates on pause status, new messaging tests, etc...\"\n      }\n    },\n    label: {\n      type: \"plain_text\",\n      text: \"Context for \" + clientName\n    }\n  });\n});\n\nconst view = {\n  type: 'modal',\n  callback_id: 'log_bulk_context',\n  private_metadata: channelId,\n  title: {\n    type: 'plain_text',\n    text: 'Log Strategic Context'\n  },\n  submit: {\n    type: 'plain_text',\n    text: 'Submit'\n  },\n  close: {\n    type: 'plain_text',\n    text: 'Cancel'\n  },\n  blocks: blocks\n};\n\nreturn [{ json: { trigger_id: triggerId, view: view } }];"
+      },
+      "id": "build-slack-context-modal-payload-id",
+      "name": "Build Slack Context Modal Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        576
+      ]
+    },
+    {
+      "id": "35e4566d-492f-43f4-95b6-10f4c641484c",
+      "name": "Parse Interaction Envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        1650
+      ],
+      "parameters": {
+        "jsCode": "const rawPayload = $json.body.payload;\nconst payload = JSON.parse(rawPayload);\nconst interactionType = payload.type;\nconst view = payload.view || {};\nconst callbackId = view.callback_id;\nconst action = (payload.actions && payload.actions[0]) || null;\nconst actionId = action ? action.action_id : null;\nconst selectedClient = (actionId === 'client_select' && action.selected_option) ? action.selected_option.value : null;\n\nconst clientBlockDef = (view.blocks || []).find(b => b.block_id === 'client_block');\nconst clientOptions = (clientBlockDef && clientBlockDef.element && clientBlockDef.element.options) || [];\n\nreturn [{\n  json: {\n    interaction_type: interactionType,\n    callback_id: callbackId,\n    action_id: actionId,\n    selected_client: selectedClient,\n    view_id: view.id,\n    view_hash: view.hash,\n    private_metadata: view.private_metadata,\n    client_options: clientOptions,\n    raw_body: $json.body\n  }\n}];"
+      }
+    },
+    {
+      "id": "f460a7b1-b95b-4dbc-b782-88f0fdc25cd6",
+      "name": "Is Client Select Action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        1650
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.interaction_type === 'block_actions' && $json.callback_id === 'log_campaign_change' && $json.action_id === 'client_select' }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c2b3b655-5d28-4d3a-8619-e99c309ee478",
+      "name": "Fetch Client Campaigns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -416,
+        1600
+      ],
+      "parameters": {
+        "url": "=https://burcfsxsxgabknmodsrd.supabase.co/rest/v1/campaign_snapshots?client_name=eq.{{ encodeURIComponent($json.selected_client) }}&select=campaign_id,campaign_name,platform,reporting_window_end&order=reporting_window_end.desc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SUPABASE_SERVICE_ROLE_KEY"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fd20402b-9c5f-46f1-af1b-39dd6865018f",
+      "name": "Build Campaign Modal Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        1600
+      ],
+      "parameters": {
+        "jsCode": "const envelope = $('Parse Interaction Envelope').item.json;\nconst clientName = envelope.selected_client;\nconst viewId = envelope.view_id;\nconst hash = envelope.view_hash;\nconst privateMetadata = envelope.private_metadata;\nconst clientOptions = envelope.client_options || [];\n\nconst rows = $input.all().map(i => i.json);\n\nconst isUnknown = (v) => !v || String(v).trim().toLowerCase() === 'unknown_campaign' || String(v).trim().toLowerCase() === 'unknown campaign';\n\nconst byId = {};\nfor (const row of rows) {\n  const id = row.campaign_id;\n  if (!id) continue;\n  if (isUnknown(row.campaign_id) || isUnknown(row.campaign_name)) continue;\n  if (!byId[id] || (row.reporting_window_end > byId[id].reporting_window_end)) {\n    byId[id] = row;\n  }\n}\nconst campaigns = Object.values(byId);\n\nconst platformLabel = (p) => p === 'instantly' ? 'Instantly' : (p === 'heyreach' ? 'HeyReach' : p);\n\nlet campaignBlock;\nlet extraBlocks = [];\nif (campaigns.length > 0) {\n  const options = campaigns.map(c => ({\n    text: { type: 'plain_text', text: ('[' + platformLabel(c.platform) + '] ' + c.campaign_name).slice(0, 75) },\n    value: (c.platform + '::' + c.campaign_id + '::' + c.campaign_name).slice(0, 150)\n  }));\n  campaignBlock = {\n    type: 'input',\n    block_id: 'campaign_multi_block',\n    element: {\n      type: 'multi_static_select',\n      action_id: 'campaign_multi_select',\n      placeholder: { type: 'plain_text', text: 'Select campaign(s)' },\n      options: options\n    },\n    label: { type: 'plain_text', text: 'Campaign(s)' }\n  };\n} else {\n  campaignBlock = {\n    type: 'input',\n    block_id: 'campaign_fallback_block',\n    element: {\n      type: 'plain_text_input',\n      action_id: 'campaign_fallback_input',\n      placeholder: { type: 'plain_text', text: 'e.g. Q3 Outbound Push' }\n    },\n    label: { type: 'plain_text', text: 'Campaign Name (no synced campaigns yet - enter manually)' }\n  };\n  extraBlocks.push({\n    type: 'input',\n    block_id: 'platform_fallback_block',\n    element: {\n      type: 'static_select',\n      action_id: 'platform_fallback_select',\n      placeholder: { type: 'plain_text', text: 'Select platform' },\n      options: [\n        { text: { type: 'plain_text', text: 'Instantly (Email)' }, value: 'instantly' },\n        { text: { type: 'plain_text', text: 'HeyReach (LinkedIn)' }, value: 'heyreach' },\n        { text: { type: 'plain_text', text: 'General / Both' }, value: 'general' }\n      ]\n    },\n    label: { type: 'plain_text', text: 'Platform' }\n  });\n}\n\nconst view = {\n  type: 'modal',\n  callback_id: 'log_campaign_change',\n  private_metadata: privateMetadata,\n  title: { type: 'plain_text', text: 'Log Campaign Change' },\n  submit: { type: 'plain_text', text: 'Submit' },\n  close: { type: 'plain_text', text: 'Cancel' },\n  blocks: [\n    {\n      type: 'input',\n      block_id: 'client_block',\n      dispatch_action: true,\n      element: {\n        type: 'static_select',\n        action_id: 'client_select',\n        placeholder: { type: 'plain_text', text: 'Select client' },\n        options: clientOptions,\n        initial_option: clientOptions.find(o => o.value === clientName)\n      },\n      label: { type: 'plain_text', text: 'Client Name' }\n    },\n    campaignBlock,\n    ...extraBlocks,\n    {\n      type: 'input',\n      block_id: 'category_block',\n      element: {\n        type: 'static_select',\n        action_id: 'category_select',\n        placeholder: { type: 'plain_text', text: 'Select category' },\n        options: [\n          { text: { type: 'plain_text', text: 'Subject Line' }, value: 'Subject Line' },\n          { text: { type: 'plain_text', text: 'Body Copy' }, value: 'Body Copy' },\n          { text: { type: 'plain_text', text: 'ICP Target' }, value: 'ICP Target' },\n          { text: { type: 'plain_text', text: 'Sender Account' }, value: 'Sender Account' }\n        ]\n      },\n      label: { type: 'plain_text', text: 'Change Category' }\n    },\n    {\n      type: 'input',\n      block_id: 'description_block',\n      element: {\n        type: 'plain_text_input',\n        action_id: 'description_input',\n        multiline: true,\n        placeholder: { type: 'plain_text', text: 'What changed, why, and expected impact...' }\n      },\n      label: { type: 'plain_text', text: 'Description of Change' }\n    }\n  ]\n};\n\nreturn [{ json: { view_id: viewId, hash: hash, view: view } }];"
+      }
+    },
+    {
+      "id": "48b86116-7d4a-44c8-beef-264a19565044",
+      "name": "Update Modal With Campaigns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        32,
+        1600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/views.update",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SLACK_BOT_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "05b08404-94a6-4376-88ae-463805ad9a66",
+      "name": "Build Confirmation Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        1360
+      ],
+      "parameters": {
+        "jsCode": "const items = $('Parse Slack Interaction').all().map(i => i.json);\nif (items.length === 0) return [];\n\nconst callbackId = items[0].callback_id;\n\nif (callbackId === 'log_campaign_change') {\n  const first = items[0];\n  const lines = items.map(it => `\u2022 [${it.platform}] ${it.campaign_name || it.campaign_id}`).join('\\n');\n  const text = `:memo: *Campaign change logged in Supabase \\`campaign_change_logs\\` table successfully!*\\n\\n*Client Name:* \\`${first.client_name}\\`\\n*Campaigns Logged:*\\n${lines}\\n*Category:* \\`${first.change_category}\\`\\n*Description:* \\`${first.change_description}\\`\\n*Actioned By:* \\`${first.actioned_by}\\``;\n  return [{ json: { channel_id: first.channel_id, text } }];\n}\n\nreturn items.map(it => {\n  const label = it.change_category === 'Campaign Context' ? ':bulb: *Strategic context logged in Supabase `campaign_change_logs` table successfully!*' : ':memo: *Campaign change logged in Supabase `campaign_change_logs` table successfully!*';\n  const text = `${label}\\n\\n*Client Name:* \\`${it.client_name}\\`\\n*Category:* \\`${it.change_category}\\`\\n*Description:* \\`${it.change_description}\\`\\n*Actioned By:* \\`${it.actioned_by}\\``;\n  return { json: { channel_id: it.channel_id || '#test-outbound-reporting', text } };\n});"
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Slash Command Log Change": {
+      "main": [
+        [
+          {
+            "node": "Respond Slash 200 OK (Log Change)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Active Clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Clients": {
+      "main": [
+        [
+          {
+            "node": "Build Slack Modal Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Modal Payload": {
+      "main": [
+        [
+          {
+            "node": "Open Slack Modal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slash Command Add Client": {
+      "main": [
+        [
+          {
+            "node": "Respond Slash 200 OK (Add Client)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Open Add Client Modal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Interactions Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond Interactions 200 OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Parse Interaction Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Slack Interaction": {
+      "main": [
+        [
+          {
+            "node": "Is Log Change?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Log Change?": {
+      "main": [
+        [
+          {
+            "node": "Write Change Log to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Client Config to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Client Config to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Post Onboarding Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slash Command Log Context": {
+      "main": [
+        [
+          {
+            "node": "Respond Slash 200 OK (Log Context)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Active Clients (Context)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Clients (Context)": {
+      "main": [
+        [
+          {
+            "node": "Build Slack Context Modal Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Context Modal Payload": {
+      "main": [
+        [
+          {
+            "node": "Open Slack Modal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Interaction Envelope": {
+      "main": [
+        [
+          {
+            "node": "Is Client Select Action?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Client Select Action?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Client Campaigns",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Slack Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Client Campaigns": {
+      "main": [
+        [
+          {
+            "node": "Build Campaign Modal Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Campaign Modal Update": {
+      "main": [
+        [
+          {
+            "node": "Update Modal With Campaigns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Change Log to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Build Confirmation Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Confirmation Message": {
+      "main": [
+        [
+          {
+            "node": "Post Change Log Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "829ac91a-a985-41fc-8f75-cafd3500ea18",
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": [],
+  "id": "6KdaAvK3PgCxelGl",
+  "tags": []
+}
